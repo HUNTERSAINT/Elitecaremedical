@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Elite Care Medical"
+version = "1.0.0"
+id = "artifacts/elite-care-medical"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22101
+
+[services.development]
+run = "pnpm --filter @workspace/elite-care-medical run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/elite-care-medical", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/elite-care-medical/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22101"
+BASE_PATH = "/"
