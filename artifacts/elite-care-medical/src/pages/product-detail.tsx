@@ -10,6 +10,34 @@ import { useCart } from '@/context/CartContext';
 import { formatNaira } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 
+function parseSpecifications(raw: string | null | undefined): Record<string, string> | null {
+  if (!raw?.trim()) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return Object.fromEntries(
+        Object.entries(parsed).map(([key, value]) => [key, String(value)]),
+      );
+    }
+  } catch {
+    // Older catalogue records use a readable "Label: value" format.
+  }
+
+  const entries = raw
+    .split(/\s*,\s*|\r?\n/)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const separator = part.indexOf(':');
+      return separator > 0
+        ? [part.slice(0, separator).trim(), part.slice(separator + 1).trim()]
+        : ['Details', part];
+    });
+
+  return entries.length ? Object.fromEntries(entries) : { Details: raw };
+}
+
 // We load product by slug from the list (API doesn't have slug-based get)
 export default function ProductDetail() {
   const { slug } = useParams<{ slug: string }>();
@@ -79,7 +107,7 @@ export default function ProductDetail() {
   }
 
   const images = product.images?.length ? product.images : [product.imageUrl].filter(Boolean) as string[];
-  const specs = product.specifications ? JSON.parse(product.specifications) as Record<string, string> : null;
+  const specs = parseSpecifications(product.specifications);
 
   return (
     <div className="min-h-[100dvh] flex flex-col">

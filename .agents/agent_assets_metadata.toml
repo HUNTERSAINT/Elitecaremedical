@@ -5,5 +5,5 @@ generated = []
 id = "vZFEmebyokMePAVjd0hud"
 uri = "file://elite-care-medical-project.tar.gz"
 type = "unspecified"
-title = "Elite Care Medical project files"
-description = "Compressed source archive for the Elite Care Medical storefront, API server, database schema, generated API clients, assets, and project configuration. Dependencies, build output, logs, and secrets are excluded."
+title = "Elite Care Medical project files with product images"
+description = "Final compressed source archive including the generated catalogue images, storefront, API server, database schema, generated clients, and configuration. Dependencies, build output, logs, and secrets are excluded."
