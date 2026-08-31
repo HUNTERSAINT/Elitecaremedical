@@ -7,7 +7,7 @@ import Footer from '@/components/Footer';
 
 export default function PaymentCallback() {
   const [location] = useLocation();
-  const searchParams = new URLSearchParams(location.split('?')[1] ?? '');
+  const searchParams = new URLSearchParams(window.location.search || location.split('?')[1] || '');
   const reference = searchParams.get('reference') ?? '';
 
   const { data, isLoading, isError } = useVerifyPayment(reference, {

@@ -46,7 +46,7 @@ All API routes mount at `/api` (handled by the API Server artifact):
 ## Admin Credentials
 
 - **Username:** `admin`
-- **Password:** `EliteCare2024!`
+- **Password:** Stored securely in the project database; do not commit or share credentials.
 
 ## Contact Details
 

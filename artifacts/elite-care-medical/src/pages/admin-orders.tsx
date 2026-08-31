@@ -14,7 +14,7 @@ export default function AdminOrders() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const LIMIT = 15;
+  const LIMIT = 20;
 
   const queryClient = useQueryClient();
   const { toast } = useToast();

@@ -1,0 +1,9 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "vZFEmebyokMePAVjd0hud"
+uri = "file://elite-care-medical-project.tar.gz"
+type = "unspecified"
+title = "Elite Care Medical project files"
+description = "Compressed source archive for the Elite Care Medical storefront, API server, database schema, generated API clients, assets, and project configuration. Dependencies, build output, logs, and secrets are excluded."

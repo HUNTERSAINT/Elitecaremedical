@@ -1,21 +1,16 @@
 import { useLocation, Link } from 'wouter';
 import { motion } from 'framer-motion';
-import { CheckCircle, Copy, MessageCircle, ShoppingBag } from 'lucide-react';
+import { CheckCircle, MessageCircle, ShoppingBag } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import { useToast } from '@/hooks/use-toast';
 
 export default function OrderConfirmation() {
   const [location] = useLocation();
-  const searchParams = new URLSearchParams(location.split('?')[1] ?? '');
+  const searchParams = new URLSearchParams(window.location.search || location.split('?')[1] || '');
   const orderId = searchParams.get('orderId');
   const method = searchParams.get('method');
   const { toast } = useToast();
-
-  const copyAccount = () => {
-    navigator.clipboard.writeText('0123456789');
-    toast({ title: 'Account number copied' });
-  };
 
   return (
     <div className="min-h-[100dvh] flex flex-col">
@@ -57,33 +52,27 @@ export default function OrderConfirmation() {
             >
               <h2 className="font-semibold text-amber-900 mb-4 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-500" />
-                Complete Your Bank Transfer
+                Bank Transfer Instructions
               </h2>
               <p className="text-sm text-amber-800 mb-4">
-                Please transfer the order total to the account below within 24 hours to confirm your order:
+                Your order is reserved for 24 hours. Please contact us on WhatsApp for the current verified bank-transfer details, then send your payment proof for confirmation.
               </p>
               <div className="bg-white rounded-xl border border-amber-200 p-4 space-y-3">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Bank</span>
-                  <span className="font-semibold">Guaranty Trust Bank (GTB)</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Account Name</span>
-                  <span className="font-semibold">Elite Care Medical</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Account Number</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold font-mono text-primary" data-testid="text-account-number">0123456789</span>
-                    <button onClick={copyAccount} className="text-muted-foreground hover:text-foreground transition-colors" data-testid="button-copy-account">
-                      <Copy size={14} />
-                    </button>
-                  </div>
+                  <span className="text-muted-foreground">Payment details</span>
+                  <span className="font-semibold text-right">Provided securely on request</span>
                 </div>
               </div>
-              <p className="text-xs text-amber-700 mt-3">
-                After transferring, send your payment proof to our WhatsApp for faster confirmation.
-              </p>
+              <a
+                href="https://wa.me/2347065599931"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#20bd5a]"
+                data-testid="link-bank-transfer-whatsapp"
+              >
+                <MessageCircle size={16} />
+                Request Bank Details on WhatsApp
+              </a>
             </motion.div>
           ) : (
             <motion.div

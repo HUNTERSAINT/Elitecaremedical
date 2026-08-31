@@ -79,7 +79,8 @@ export default function Checkout() {
             data: {
               orderId: order.id,
               email: data.customerEmail,
-              amount: total * 100, // kobo
+              // The API accepts naira and converts to Paystack's kobo unit.
+              amount: total,
               callbackUrl: `${window.location.origin}/payment-callback`,
             },
           }, {
