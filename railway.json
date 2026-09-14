@@ -1,1 +1,8 @@
-
+{
+  "build": {
+    "buildCommand": "corepack enable && pnpm install --no-frozen-lockfile && pnpm --filter api-server build"
+  },
+  "deploy": {
+    "startCommand": "pnpm --filter api-server start"
+  }
+}
