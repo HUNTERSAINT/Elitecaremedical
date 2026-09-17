@@ -1,0 +1,1 @@
+- [WhatsApp token validation](whatsapp-token-validation.md) — secret presence is not enough; verify token expiry and phone-number access with Meta before sending.
