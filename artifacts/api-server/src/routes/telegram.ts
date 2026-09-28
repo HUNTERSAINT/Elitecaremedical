@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
+import axios from "axios";
 import { and, desc, eq, ilike, inArray } from "drizzle-orm";
 import {
   adminsTable,
@@ -17,6 +18,18 @@ const TELEGRAM_API = "https://api.telegram.org";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
 const USE_WEBHOOK = process.env.TELEGRAM_USE_WEBHOOK === "true";
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY ?? "";
+const PAYSTACK_CALLBACK_URL =
+  process.env.PAYSTACK_CALLBACK_URL ??
+  (process.env.PUBLIC_APP_URL
+    ? `${process.env.PUBLIC_APP_URL.replace(/\/$/, "")}/payment-callback`
+    : undefined);
+const TELEGRAM_ADMIN_CHAT_IDS = new Set(
+  (process.env.TELEGRAM_ADMIN_CHAT_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
 const DELIVERY_FEE = 2000;
 
 type TelegramUser = {
@@ -42,6 +55,24 @@ type TelegramApiResponse<T> = {
   ok: boolean;
   result?: T;
   description?: string;
+};
+
+type OrderNotification = {
+  id: number;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  deliveryAddress: string;
+  city: string | null;
+  state: string | null;
+  items: Array<{
+    productName: string;
+    quantity: number;
+    totalPrice: number;
+  }>;
+  total: string;
+  paymentMethod: string;
+  paymentStatus: string;
 };
 
 type TelegramCommandField =
@@ -194,6 +225,59 @@ async function telegramRequest<T>(
 
 async function sendMessage(chatId: string, text: string): Promise<void> {
   await telegramRequest("sendMessage", { chat_id: chatId, text });
+}
+
+function hasConfiguredAdminAccess(chatId: string): boolean {
+  return TELEGRAM_ADMIN_CHAT_IDS.has(chatId);
+}
+
+export async function notifyTelegramAdmins(message: string): Promise<void> {
+  if (!BOT_TOKEN || !TELEGRAM_ADMIN_CHAT_IDS.size) return;
+
+  await Promise.all(
+    [...TELEGRAM_ADMIN_CHAT_IDS].map((chatId) => sendMessage(chatId, message)),
+  );
+}
+
+export async function notifyAdminsAboutOrder(
+  order: OrderNotification,
+  source: "Website" | "Telegram",
+  paystackReference?: string,
+): Promise<void> {
+  const itemLines = order.items.map(
+    (item) =>
+      `• ${item.quantity} × ${item.productName} — ${formatNaira(item.totalPrice)}`,
+  );
+
+  await notifyTelegramAdmins(
+    [
+      `New ${source} order #${order.id}`,
+      `Customer: ${order.customerName}`,
+      `Phone: ${order.customerPhone}`,
+      `Email: ${order.customerEmail}`,
+      `Delivery: ${order.deliveryAddress}, ${order.city ?? ""}, ${order.state ?? ""}`,
+      "",
+      ...itemLines,
+      "",
+      `Total: ${formatNaira(Number(order.total))}`,
+      `Payment: ${order.paymentMethod} (${order.paymentStatus})`,
+      ...(paystackReference ? [`Paystack ref: ${paystackReference}`] : []),
+    ].join("\n"),
+  );
+}
+
+export async function notifyAdminsAboutPayment(
+  orderId: number,
+  reference: string,
+  amount: number,
+): Promise<void> {
+  await notifyTelegramAdmins(
+    [
+      `Paystack payment confirmed for order #${orderId}`,
+      `Amount: ${formatNaira(amount)}`,
+      `Reference: ${reference}`,
+    ].join("\n"),
+  );
 }
 
 function getPhoneForOrder(chatId: string, context: TelegramSessionContext): string {
@@ -373,6 +457,7 @@ async function createTelegramOrder(
   }
 
   const subtotal = orderItems.reduce((sum, item) => sum + item.totalPrice, 0);
+  const paymentMethod = PAYSTACK_SECRET ? "card" : "bank_transfer";
   const [order] = await db
     .insert(ordersTable)
     .values({
@@ -386,21 +471,97 @@ async function createTelegramOrder(
       subtotal: String(subtotal),
       deliveryFee: String(DELIVERY_FEE),
       total: String(subtotal + DELIVERY_FEE),
-      paymentMethod: "bank_transfer",
+      paymentMethod,
       status: "pending",
       paymentStatus: "pending",
       notes: "Order placed via Telegram bot",
     })
     .returning({ id: ordersTable.id, total: ordersTable.total });
 
+  let payment:
+    | { authorizationUrl: string; reference: string }
+    | undefined;
+  if (PAYSTACK_SECRET) {
+    try {
+      const response = await axios.post(
+        "https://api.paystack.co/transaction/initialize",
+        {
+          email: context.customerEmail,
+          amount: Math.round(Number(order.total) * 100),
+          reference: `ECM-TG-${order.id}-${Date.now()}`,
+          ...(PAYSTACK_CALLBACK_URL
+            ? { callback_url: PAYSTACK_CALLBACK_URL }
+            : {}),
+          metadata: { orderId: order.id, source: "telegram" },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${PAYSTACK_SECRET}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      const paymentData = response.data?.data;
+      if (paymentData?.authorization_url && paymentData?.reference) {
+        payment = {
+          authorizationUrl: paymentData.authorization_url,
+          reference: paymentData.reference,
+        };
+        await db
+          .update(ordersTable)
+          .set({ paystackReference: payment.reference })
+          .where(eq(ordersTable.id, order.id));
+      }
+    } catch (error) {
+      logger.error(
+        { error, orderId: order.id },
+        "Telegram Paystack initialization failed",
+      );
+    }
+  }
+
+  await notifyAdminsAboutOrder(
+    {
+      id: order.id,
+      customerName: context.customerName ?? "",
+      customerEmail: context.customerEmail ?? "",
+      customerPhone: getPhoneForOrder(chatId, context),
+      deliveryAddress: context.deliveryAddress ?? "",
+      city: context.city ?? null,
+      state: context.state ?? null,
+      items: orderItems,
+      total: order.total,
+      paymentMethod,
+      paymentStatus: "pending",
+    },
+    "Telegram",
+    payment?.reference,
+  );
+
   await saveSession(chatId, "idle", { cart: [], lastResults: [] }, username);
+  if (payment) {
+    await sendMessage(
+      chatId,
+      [
+        `Order #${order.id} received.`,
+        `Total: ${formatNaira(Number(order.total))}`,
+        "",
+        "Pay securely with Paystack using this link:",
+        payment.authorizationUrl,
+        "",
+        "After payment, the website callback will verify the transaction.",
+      ].join("\n"),
+    );
+    return;
+  }
+
   await sendMessage(
     chatId,
     [
       `Order #${order.id} received.`,
       `Total: ${formatNaira(Number(order.total))}`,
       "",
-      "Our team will contact you with verified payment details and delivery confirmation.",
+      "Paystack is not available right now. Our team will contact you with verified payment details and delivery confirmation.",
     ].join("\n"),
   );
 }
@@ -439,13 +600,11 @@ async function sendAdminHelp(chatId: string): Promise<void> {
     chatId,
     [
       "Admin commands:",
-      "/admin login <username> <password>",
-      "/admin logout",
       "/admin products [search]",
       "/admin add Name | price | categoryId | description | imageUrl",
       "/admin update <id> name=\"New name\" price=12000 inStock=true",
       "",
-      "The add command requires a category ID from the website admin panel.",
+      "Product changes made here are reflected on the website immediately.",
     ].join("\n"),
   );
 }
@@ -494,6 +653,15 @@ async function handleAdminCommand(
   const action = (subcommand ?? "help").toLowerCase();
 
   if (action === "login") {
+    if (TELEGRAM_ADMIN_CHAT_IDS.size) {
+      await sendMessage(
+        chatId,
+        hasConfiguredAdminAccess(chatId)
+          ? "This chat is already configured as a Telegram store admin."
+          : "This chat is not configured as a Telegram store admin.",
+      );
+      return true;
+    }
     const loginText = rest.join(" ");
     const firstSpace = loginText.indexOf(" ");
     if (firstSpace < 1) {
@@ -519,6 +687,13 @@ async function handleAdminCommand(
   }
 
   if (action === "logout") {
+    if (hasConfiguredAdminAccess(chatId)) {
+      await sendMessage(
+        chatId,
+        "This chat is configured as a store admin. Remove its chat ID from TELEGRAM_ADMIN_CHAT_IDS to revoke access.",
+      );
+      return true;
+    }
     await saveSession(
       chatId,
       "idle",
@@ -529,10 +704,15 @@ async function handleAdminCommand(
     return true;
   }
 
-  if (!context.adminUsername) {
+  const adminAccess = TELEGRAM_ADMIN_CHAT_IDS.size
+    ? hasConfiguredAdminAccess(chatId)
+    : Boolean(context.adminUsername);
+  if (!adminAccess) {
     await sendMessage(
       chatId,
-      "Admin commands are protected. Use /admin login <username> <password> to continue.",
+      TELEGRAM_ADMIN_CHAT_IDS.size
+        ? "This Telegram chat is not configured as a store admin."
+        : "Admin commands are protected. Use /admin login <username> <password> to continue.",
     );
     return true;
   }

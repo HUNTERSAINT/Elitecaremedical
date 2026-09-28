@@ -15,7 +15,9 @@ handles both `/` and `/api/*`.
    - `ADMIN_USERNAME`
    - `ADMIN_PASSWORD`
    - `PAYSTACK_SECRET_KEY` if Paystack checkout is enabled
+   - `PAYSTACK_CALLBACK_URL` or `PUBLIC_APP_URL` so Telegram Paystack links can return to the payment verification page
    - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_ADMIN_CHAT_IDS` (comma-separated Telegram chat IDs allowed to manage products and receive order alerts)
    - `TELEGRAM_USE_WEBHOOK=true` only when using webhook delivery
    - `TELEGRAM_WEBHOOK_SECRET` when webhook delivery is enabled
 5. After the first deploy, apply the Drizzle schema against the Railway

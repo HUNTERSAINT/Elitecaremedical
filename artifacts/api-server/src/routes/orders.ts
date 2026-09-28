@@ -9,6 +9,7 @@ import {
   ListOrdersQueryParams,
 } from "@workspace/api-zod";
 import { verifyAdminToken } from "../lib/auth";
+import { notifyAdminsAboutOrder } from "./telegram";
 
 const router: IRouter = Router();
 
@@ -99,6 +100,10 @@ router.post("/orders", async (req, res): Promise<void> => {
       paymentStatus: "pending",
     })
     .returning();
+
+  void notifyAdminsAboutOrder(order, "Website").catch((error) => {
+    req.log.error({ error, orderId: order.id }, "Website order notification failed");
+  });
 
   res.status(201).json(serializeOrder(order));
 });

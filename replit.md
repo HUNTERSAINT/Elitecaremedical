@@ -60,6 +60,9 @@ All API routes mount at `/api` (handled by the API Server artifact):
 | `SESSION_SECRET` | JWT signing secret (already set) |
 | `PAYSTACK_SECRET_KEY` | Paystack payments (must be configured) |
 | `DATABASE_URL` | PostgreSQL connection (managed by Replit) |
+| `TELEGRAM_BOT_TOKEN` | Telegram shopping bot access |
+| `TELEGRAM_ADMIN_CHAT_IDS` | Comma-separated Telegram chat IDs authorized to manage products and receive order notifications |
+| `PAYSTACK_CALLBACK_URL` or `PUBLIC_APP_URL` | Return URL used by Telegram Paystack checkout |
 
 ## Key Design Decisions
 

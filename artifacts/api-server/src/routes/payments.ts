@@ -4,6 +4,7 @@ import { db, ordersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { InitializePaymentBody, VerifyPaymentParams } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
+import { notifyAdminsAboutPayment } from "./telegram";
 
 const router: IRouter = Router();
 
@@ -16,7 +17,7 @@ router.post("/payments/initialize", async (req, res): Promise<void> => {
     return;
   }
 
-  const { orderId, email, amount, callbackUrl } = parsed.data;
+  const { orderId, email, callbackUrl } = parsed.data;
 
   if (!PAYSTACK_SECRET) {
     req.log.error("PAYSTACK_SECRET_KEY is not set");
@@ -25,11 +26,20 @@ router.post("/payments/initialize", async (req, res): Promise<void> => {
   }
 
   try {
+    const [order] = await db
+      .select()
+      .from(ordersTable)
+      .where(eq(ordersTable.id, orderId));
+    if (!order) {
+      res.status(404).json({ error: "Order not found" });
+      return;
+    }
+
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
       {
-        email,
-        amount: Math.round(amount * 100), // Convert to kobo
+        email: order.customerEmail || email,
+        amount: Math.round(Number(order.total) * 100), // Convert to kobo
         reference: `ECM-${orderId}-${Date.now()}`,
         callback_url: callbackUrl,
         metadata: { orderId },
@@ -88,10 +98,26 @@ router.get("/payments/verify/:reference", async (req, res): Promise<void> => {
 
     if (txData.status === "success") {
       if (orderId) {
-        await db
+        const [order] = await db
           .update(ordersTable)
           .set({ paymentStatus: "paid", status: "processing", paystackReference: reference })
-          .where(eq(ordersTable.id, orderId));
+          .where(eq(ordersTable.id, orderId))
+          .returning({
+            id: ordersTable.id,
+            total: ordersTable.total,
+          });
+        if (order) {
+          void notifyAdminsAboutPayment(
+            order.id,
+            reference,
+            Number(order.total),
+          ).catch((error) => {
+            logger.error(
+              { error, orderId: order.id },
+              "Payment notification failed",
+            );
+          });
+        }
       }
 
       res.json({ status: "success", message: "Payment verified", orderId: orderId ?? 0 });

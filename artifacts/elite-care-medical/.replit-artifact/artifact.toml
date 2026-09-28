@@ -1,7 +1,7 @@
 kind = "web"
 previewPath = "/"
 title = "Elite Care Medical"
-description = "A medical equipment storefront for browsing products, placing orders, managing catalog operations through a protected admin experience, and shopping through a Telegram bot."
+description = "A medical equipment storefront for browsing products, placing orders with Paystack, managing the catalog through a protected admin experience, and shopping through a Telegram bot."
 version = "1.0.0"
 id = "artifacts/elite-care-medical"
 router = "path"
