@@ -10,10 +10,14 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
-const webDistDirectory = path.resolve(
-  currentDirectory,
-  "../../elite-care-medical/dist/public",
-);
+const webDistDirectoryCandidates = [
+  path.resolve(currentDirectory, "public"),
+  path.resolve(currentDirectory, "../../elite-care-medical/dist/public"),
+];
+const webDistDirectory =
+  webDistDirectoryCandidates.find((directory) =>
+    fs.existsSync(path.join(directory, "index.html")),
+  ) ?? webDistDirectoryCandidates[0];
 
 app.use(
   pinoHttp({
@@ -47,9 +51,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", router);
 startTelegramBot();
 
-const hasBuiltStorefront = fs.existsSync(
-  path.join(webDistDirectory, "index.html"),
-);
+const hasBuiltStorefront = fs.existsSync(path.join(webDistDirectory, "index.html"));
 
 if (process.env.NODE_ENV === "production" || hasBuiltStorefront) {
   app.use(express.static(webDistDirectory, { index: false }));
