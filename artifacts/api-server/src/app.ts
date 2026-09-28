@@ -1,6 +1,7 @@
 import express, { type Express, type Request } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import router from "./routes";
@@ -46,7 +47,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", router);
 startTelegramBot();
 
-if (process.env.NODE_ENV === "production") {
+const hasBuiltStorefront = fs.existsSync(
+  path.join(webDistDirectory, "index.html"),
+);
+
+if (process.env.NODE_ENV === "production" || hasBuiltStorefront) {
   app.use(express.static(webDistDirectory, { index: false }));
 
   app.use((req, res, next) => {
