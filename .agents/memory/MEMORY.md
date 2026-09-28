@@ -1,0 +1,1 @@
+- [Railway monorepo services](railway-monorepo-deployment.md) — keep the public app service separate from auto-created workspace package services and verify the repo trigger.
