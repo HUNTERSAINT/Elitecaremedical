@@ -1,1 +1,2 @@
 - [Railway monorepo services](railway-monorepo-deployment.md) — keep the public app service separate from auto-created workspace package services and verify the repo trigger.
+- [Railway deployment monitoring](railway-deployment-monitoring.md) — verify the deployed commit hash, not only a successful deployment status.
