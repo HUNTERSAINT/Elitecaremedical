@@ -46,11 +46,19 @@ type TelegramMessage = {
   chat?: { id: number; type?: string };
   from?: TelegramUser;
   text?: string;
+  caption?: string;
+  photo?: Array<{ file_id: string; width: number; height: number }>;
 };
 
 type TelegramUpdate = {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: {
+    id: string;
+    from?: TelegramUser;
+    data?: string;
+    message?: TelegramMessage;
+  };
 };
 
 type TelegramApiResponse<T> = {
@@ -58,6 +66,16 @@ type TelegramApiResponse<T> = {
   result?: T;
   error_code?: number;
   description?: string;
+};
+
+type TelegramButton = {
+  text: string;
+  callback_data?: string;
+  url?: string;
+};
+
+type TelegramReplyMarkup = {
+  inline_keyboard: TelegramButton[][];
 };
 
 type OrderNotification = {
@@ -232,8 +250,41 @@ async function telegramRequest<T>(
   return body.result ?? null;
 }
 
-async function sendMessage(chatId: string, text: string): Promise<void> {
-  await telegramRequest("sendMessage", { chat_id: chatId, text });
+async function sendMessage(
+  chatId: string,
+  text: string,
+  replyMarkup?: TelegramReplyMarkup,
+): Promise<void> {
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text,
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  });
+}
+
+async function answerCallbackQuery(
+  callbackQueryId: string,
+  text?: string,
+): Promise<void> {
+  await telegramRequest("answerCallbackQuery", {
+    callback_query_id: callbackQueryId,
+    ...(text ? { text } : {}),
+  });
+}
+
+function buttons(...rows: TelegramButton[][]): TelegramReplyMarkup {
+  return { inline_keyboard: rows };
+}
+
+function menuButton(text: string, callbackData: string): TelegramButton {
+  return { text, callback_data: callbackData };
+}
+
+function telegramImageUrl(fileId: string): string {
+  const path = `/api/telegram/image/${encodeURIComponent(fileId)}`;
+  return process.env.PUBLIC_APP_URL
+    ? `${process.env.PUBLIC_APP_URL.replace(/\/$/, "")}${path}`
+    : path;
 }
 
 function hasConfiguredAdminAccess(chatId: string): boolean {
@@ -299,15 +350,13 @@ async function sendWelcome(chatId: string): Promise<void> {
     [
       "Welcome to Elite Care Medical.",
       "",
-      "Shop medical equipment directly here:",
-      "/shop gloves",
-      "/cart",
-      "/checkout",
-      "/clear",
-      "",
-      "You can also type a product name to search.",
-      "Use /myid if you need to share your Telegram ID with the store admin.",
+      "Shop medical equipment directly here. Use the buttons below to continue.",
     ].join("\n"),
+    buttons(
+      [menuButton("Browse products", "shop:featured")],
+      [menuButton("View cart", "cart:view"), menuButton("Checkout", "checkout:start")],
+      [menuButton("Clear cart", "cart:clear")],
+    ),
   );
 }
 
@@ -357,8 +406,12 @@ async function sendCart(
       `Delivery: ${formatNaira(DELIVERY_FEE)}`,
       `Total: ${formatNaira(subtotal + DELIVERY_FEE)}`,
       "",
-      "Reply /checkout to place the order.",
+      "Choose an action:",
     ].join("\n"),
+    buttons(
+      [menuButton("Checkout", "checkout:start")],
+      [menuButton("Clear cart", "cart:clear"), menuButton("Browse more", "shop:featured")],
+    ),
   );
 }
 
@@ -402,12 +455,21 @@ async function searchProducts(
       `I found ${products.length} product${products.length === 1 ? "" : "s"}:`,
       "",
       ...products.map(
-        (product, index) =>
-          `${index + 1}. ${product.name} — ${formatNaira(Number(product.price))}`,
+        (product) =>
+          `• ${product.name} — ${formatNaira(Number(product.price))}`,
       ),
       "",
-      "Reply /add 1 (or just 1) to add an item to your cart.",
+      "Choose a product to add it to your cart.",
     ].join("\n"),
+    buttons(
+      ...products.map((product) => [
+        menuButton(
+          `Add ${product.name.slice(0, 28)}`,
+          `cart:add:${product.id}`,
+        ),
+      ]),
+      [menuButton("View cart", "cart:view"), menuButton("Main menu", "menu:main")],
+    ),
   );
 }
 
@@ -421,7 +483,11 @@ async function beginCheckout(
     return;
   }
   await saveSession(chatId, "name", context, username);
-  await sendMessage(chatId, "Great. What is your full name?");
+  await sendMessage(
+    chatId,
+    "Great. What is your full name?",
+    buttons([menuButton("Cancel checkout", "checkout:cancel")]),
+  );
 }
 
 async function createTelegramOrder(
@@ -555,11 +621,14 @@ async function createTelegramOrder(
         `Order #${order.id} received.`,
         `Total: ${formatNaira(Number(order.total))}`,
         "",
-        "Pay securely with Paystack using this link:",
-        payment.authorizationUrl,
+        "Tap Pay now to complete your payment securely with Paystack.",
         "",
-        "After payment, the website callback will verify the transaction.",
+        "After paying, tap Check payment. You do not need to contact an admin.",
       ].join("\n"),
+      buttons(
+        [{ text: "Pay now", url: payment.authorizationUrl }],
+        [menuButton("Check payment", `payment:check:${payment.reference}`)],
+      ),
     );
     return;
   }
@@ -570,8 +639,10 @@ async function createTelegramOrder(
       `Order #${order.id} received.`,
       `Total: ${formatNaira(Number(order.total))}`,
       "",
-      "Paystack is not available right now. Our team will contact you with verified payment details and delivery confirmation.",
+      "Online payment is temporarily unavailable. Please try checkout again later.",
+      "No payment has been taken and no admin contact is required.",
     ].join("\n"),
+    buttons([menuButton("Back to menu", "menu:main")]),
   );
 }
 
@@ -608,13 +679,17 @@ async function sendAdminHelp(chatId: string): Promise<void> {
   await sendMessage(
     chatId,
     [
-      "Admin commands:",
-      "/admin products [search]",
-      "/admin add Name | price | categoryId | description | imageUrl",
-      "/admin update <id> name=\"New name\" price=12000 inStock=true",
+      "Store admin panel",
+      "",
+      "Use the buttons to manage products. To add a product, send the name, price, description, then send the product image when requested.",
       "",
       "Product changes made here are reflected on the website immediately.",
     ].join("\n"),
+    buttons(
+      [menuButton("Add product", "admin:add")],
+      [menuButton("Manage products", "admin:products")],
+      [menuButton("Main menu", "menu:main")],
+    ),
   );
 }
 
@@ -633,21 +708,200 @@ async function sendAdminProducts(chatId: string, search?: string): Promise<void>
     .orderBy(desc(productsTable.createdAt))
     .limit(20);
 
+  if (!products.length) {
+    await sendMessage(
+      chatId,
+      "No products matched that search.",
+      buttons([menuButton("Back to admin", "admin:menu")]),
+    );
+    return;
+  }
+
   await sendMessage(
     chatId,
-    products.length
-      ? [
-          "Catalog:",
-          ...products.map(
-            (product) =>
-              `#${product.id} ${product.name} — ${formatNaira(
-                Number(product.price),
-              )} — ${product.categoryName ?? "Uncategorized"} — ${
-                product.inStock ? "in stock" : "out of stock"
-              }`,
-          ),
-        ].join("\n")
-      : "No products matched that search.",
+    "Catalog products:",
+    buttons(
+      ...products.map((product) => [
+        menuButton(
+          `#${product.id} ${product.name.slice(0, 24)} — ${formatNaira(Number(product.price))}`,
+          `admin:product:${product.id}`,
+        ),
+      ]),
+      [menuButton("Add product", "admin:add"), menuButton("Admin menu", "admin:menu")],
+    ),
+  );
+}
+
+async function sendAdminProductActions(
+  chatId: string,
+  productId: number,
+): Promise<void> {
+  const [product] = await db
+    .select({
+      id: productsTable.id,
+      name: productsTable.name,
+      price: productsTable.price,
+      imageUrl: productsTable.imageUrl,
+      inStock: productsTable.inStock,
+    })
+    .from(productsTable)
+    .where(eq(productsTable.id, productId));
+
+  if (!product) {
+    await sendMessage(
+      chatId,
+      "That product was not found.",
+      buttons([menuButton("Manage products", "admin:products")]),
+    );
+    return;
+  }
+
+  await sendMessage(
+    chatId,
+    [
+      `#${product.id} ${product.name}`,
+      `Price: ${formatNaira(Number(product.price))}`,
+      `Status: ${product.inStock ? "In stock" : "Out of stock"}`,
+      `Image: ${product.imageUrl ? "set" : "not set"}`,
+    ].join("\n"),
+    buttons(
+      [menuButton("Update image", `admin:image:${product.id}`)],
+      [
+        menuButton(
+          product.inStock ? "Mark out of stock" : "Mark in stock",
+          `admin:stock:${product.id}`,
+        ),
+      ],
+      [menuButton("Manage products", "admin:products")],
+    ),
+  );
+}
+
+async function startAdminProductWizard(
+  chatId: string,
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<void> {
+  await saveSession(
+    chatId,
+    "admin_name",
+    { ...context, adminDraft: undefined },
+    username,
+  );
+  await sendMessage(
+    chatId,
+    "Add product: send the product name.",
+    buttons([menuButton("Cancel", "admin:cancel")]),
+  );
+}
+
+async function sendAdminCategories(
+  chatId: string,
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<void> {
+  const categories = await db
+    .select({ id: categoriesTable.id, name: categoriesTable.name })
+    .from(categoriesTable)
+    .orderBy(categoriesTable.name);
+
+  await saveSession(chatId, "admin_category", context, username);
+  await sendMessage(
+    chatId,
+    "Choose the product category:",
+    buttons(
+      ...categories.map((category) => [
+        menuButton(category.name, `admin:category:${category.id}`),
+      ]),
+      [menuButton("Cancel", "admin:cancel")],
+    ),
+  );
+}
+
+async function startAdminImageUpdate(
+  chatId: string,
+  productId: number,
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<void> {
+  await saveSession(
+    chatId,
+    "admin_image",
+    { ...context, adminDraft: { productId } },
+    username,
+  );
+  await sendMessage(
+    chatId,
+    `Send the new image for product #${productId} as a Telegram photo.`,
+    buttons([menuButton("Cancel", "admin:cancel")]),
+  );
+}
+
+async function createProductFromDraft(
+  chatId: string,
+  context: TelegramSessionContext,
+  imageFileId: string | undefined,
+  username?: string | null,
+): Promise<void> {
+  const draft = context.adminDraft;
+  if (!draft?.name || !draft.price || !draft.categoryId) {
+    await sendMessage(chatId, "The product details are incomplete. Please start again.");
+    await sendAdminHelp(chatId);
+    return;
+  }
+
+  const baseSlug = slugify(draft.name) || `product-${Date.now()}`;
+  const [existingSlug] = await db
+    .select({ id: productsTable.id })
+    .from(productsTable)
+    .where(eq(productsTable.slug, baseSlug));
+  const slug = existingSlug ? `${baseSlug}-${Date.now()}` : baseSlug;
+  const imageUrl = imageFileId ? telegramImageUrl(imageFileId) : null;
+  const [product] = await db
+    .insert(productsTable)
+    .values({
+      name: draft.name,
+      slug,
+      price: draft.price,
+      categoryId: draft.categoryId,
+      description: draft.description || null,
+      imageUrl,
+      images: imageUrl ? [imageUrl] : [],
+    })
+    .returning({ id: productsTable.id, name: productsTable.name });
+
+  await saveSession(chatId, "idle", { ...context, adminDraft: undefined }, username);
+  await sendMessage(
+    chatId,
+    `Product #${product.id} created: ${product.name}${imageUrl ? "\nThe image is live on the website." : ""}`,
+    buttons(
+      [menuButton("Add another product", "admin:add")],
+      [menuButton("Manage products", "admin:products")],
+    ),
+  );
+}
+
+async function updateProductImage(
+  chatId: string,
+  productId: number,
+  fileId: string,
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<void> {
+  const imageUrl = telegramImageUrl(fileId);
+  const [product] = await db
+    .update(productsTable)
+    .set({ imageUrl, images: [imageUrl] })
+    .where(eq(productsTable.id, productId))
+    .returning({ id: productsTable.id, name: productsTable.name });
+
+  await saveSession(chatId, "idle", { ...context, adminDraft: undefined }, username);
+  await sendMessage(
+    chatId,
+    product
+      ? `Image updated for #${product.id} ${product.name}. It is now live on the website.`
+      : `Product #${productId} was not found.`,
+    buttons([menuButton("Manage products", "admin:products")]),
   );
 }
 
@@ -731,50 +985,13 @@ async function handleAdminCommand(
     return true;
   }
 
-  if (action === "products" || action === "list") {
-    await sendAdminProducts(chatId, rest.join(" ").trim() || undefined);
+  if (action === "add") {
+    await startAdminProductWizard(chatId, context, username);
     return true;
   }
 
-  if (action === "add") {
-    const values = rest.join(" ").split("|").map((value) => value.trim());
-    const [name, rawPrice, rawCategoryId, description, imageUrl] = values;
-    const price = Number(rawPrice);
-    const categoryId = Number(rawCategoryId);
-    if (!name || !Number.isFinite(price) || !Number.isInteger(categoryId)) {
-      await sendMessage(
-        chatId,
-        "Usage: /admin add Name | price | categoryId | description | imageUrl",
-      );
-      return true;
-    }
-    const [category] = await db
-      .select({ id: categoriesTable.id })
-      .from(categoriesTable)
-      .where(eq(categoriesTable.id, categoryId));
-    if (!category) {
-      await sendMessage(chatId, `Category ${categoryId} does not exist.`);
-      return true;
-    }
-    const baseSlug = slugify(name) || `product-${Date.now()}`;
-    const [existingSlug] = await db
-      .select({ id: productsTable.id })
-      .from(productsTable)
-      .where(eq(productsTable.slug, baseSlug));
-    const slug = existingSlug ? `${baseSlug}-${Date.now()}` : baseSlug;
-    const [product] = await db
-      .insert(productsTable)
-      .values({
-        name,
-        slug,
-        price: String(price),
-        categoryId,
-        description: description || null,
-        imageUrl: imageUrl || null,
-        images: imageUrl ? [imageUrl] : [],
-      })
-      .returning({ id: productsTable.id, name: productsTable.name });
-    await sendMessage(chatId, `Product #${product.id} created: ${product.name}`);
+  if (action === "products" || action === "list") {
+    await sendAdminProducts(chatId, rest.join(" ").trim() || undefined);
     return true;
   }
 
@@ -855,6 +1072,305 @@ async function handleAdminCommand(
   return true;
 }
 
+async function verifyTelegramPayment(
+  chatId: string,
+  reference: string,
+): Promise<void> {
+  if (!PAYSTACK_SECRET) {
+    await sendMessage(
+      chatId,
+      "Online payment is temporarily unavailable. Please try again later.",
+      buttons([menuButton("Back to menu", "menu:main")]),
+    );
+    return;
+  }
+
+  const [order] = await db
+    .select({ id: ordersTable.id, total: ordersTable.total, paymentStatus: ordersTable.paymentStatus })
+    .from(ordersTable)
+    .where(eq(ordersTable.paystackReference, reference));
+  if (!order) {
+    await sendMessage(chatId, "Payment reference not found. Please start checkout again.");
+    return;
+  }
+
+  try {
+    const response = await axios.get(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } },
+    );
+    const transaction = response.data?.data;
+    if (transaction?.status !== "success") {
+      await sendMessage(
+        chatId,
+        "Payment has not been completed yet. Tap Pay now to finish, then check again.",
+        buttons([menuButton("Check payment again", `payment:check:${reference}`)]),
+      );
+      return;
+    }
+
+    if (order.paymentStatus !== "paid") {
+      const [paidOrder] = await db
+        .update(ordersTable)
+        .set({ paymentStatus: "paid", status: "processing" })
+        .where(eq(ordersTable.id, order.id))
+        .returning({ id: ordersTable.id, total: ordersTable.total });
+      if (paidOrder) {
+        await notifyAdminsAboutPayment(
+          paidOrder.id,
+          reference,
+          Number(paidOrder.total),
+        );
+      }
+    }
+
+    await sendMessage(
+      chatId,
+      `Payment confirmed for order #${order.id}. Your order is now being processed.`,
+      buttons([menuButton("Continue shopping", "shop:featured")]),
+    );
+  } catch (error) {
+    logger.error({ error, reference }, "Telegram payment verification failed");
+    await sendMessage(
+      chatId,
+      "We could not verify the payment right now. Tap Check payment again in a moment.",
+      buttons([menuButton("Check payment again", `payment:check:${reference}`)]),
+    );
+  }
+}
+
+async function handleCallbackQuery(callbackQuery: NonNullable<TelegramUpdate["callback_query"]>): Promise<void> {
+  const chatId = callbackQuery.message?.chat?.id;
+  const data = callbackQuery.data ?? "";
+  if (!chatId) return;
+
+  await answerCallbackQuery(callbackQuery.id);
+  const chatIdString = String(chatId);
+  const username = callbackQuery.from?.username ?? null;
+  const session = await getSession(chatIdString, username ?? undefined);
+  const context = session.context;
+
+  if (data === "menu:main") {
+    await saveSession(chatIdString, "idle", { ...context, lastResults: [] }, username);
+    await sendWelcome(chatIdString);
+    return;
+  }
+
+  if (data === "shop:featured") {
+    await searchProducts(chatIdString, "", context, username);
+    return;
+  }
+
+  if (data === "cart:view") {
+    await sendCart(chatIdString, context);
+    return;
+  }
+
+  if (data === "cart:clear") {
+    await saveSession(chatIdString, "idle", { ...context, cart: [] }, username);
+    await sendMessage(
+      chatIdString,
+      "Your cart is empty now.",
+      buttons([menuButton("Browse products", "shop:featured")]),
+    );
+    return;
+  }
+
+  if (data.startsWith("cart:add:")) {
+    const productId = Number(data.slice("cart:add:".length));
+    if (!Number.isInteger(productId)) return;
+    const [product] = await db
+      .select({ id: productsTable.id, name: productsTable.name, inStock: productsTable.inStock })
+      .from(productsTable)
+      .where(eq(productsTable.id, productId));
+    if (!product || !product.inStock) {
+      await sendMessage(chatIdString, "That product is no longer in stock.");
+      return;
+    }
+    const existing = context.cart.find((item) => item.productId === productId);
+    const cart = existing
+      ? context.cart.map((item) =>
+          item.productId === productId
+            ? { ...item, quantity: item.quantity + 1 }
+            : item,
+        )
+      : [...context.cart, { productId, quantity: 1 }];
+    await saveSession(chatIdString, "idle", { ...context, cart }, username);
+    await sendMessage(
+      chatIdString,
+      `${product.name} added to your cart.`,
+      buttons(
+        [menuButton("View cart", "cart:view"), menuButton("Checkout", "checkout:start")],
+        [menuButton("Browse more", "shop:featured")],
+      ),
+    );
+    return;
+  }
+
+  if (data === "checkout:start") {
+    await beginCheckout(chatIdString, context, username);
+    return;
+  }
+
+  if (data === "checkout:cancel") {
+    await saveSession(chatIdString, "idle", { ...context, lastResults: [] }, username);
+    await sendMessage(chatIdString, "Checkout cancelled.", buttons([menuButton("View cart", "cart:view")]));
+    return;
+  }
+
+  if (data === "checkout:confirm") {
+    if (session.state !== "confirm") {
+      await sendMessage(chatIdString, "Checkout has expired. Tap Checkout to start again.");
+      return;
+    }
+    await createTelegramOrder(chatIdString, context, username);
+    return;
+  }
+
+  if (data.startsWith("payment:check:")) {
+    await verifyTelegramPayment(chatIdString, data.slice("payment:check:".length));
+    return;
+  }
+
+  const adminAccess = TELEGRAM_ADMIN_CHAT_IDS.size
+    ? hasConfiguredAdminAccess(chatIdString)
+    : Boolean(context.adminUsername);
+  if (!adminAccess && data.startsWith("admin:")) {
+    await sendMessage(chatIdString, "This Telegram chat is not configured as a store admin.");
+    return;
+  }
+
+  if (data === "admin:menu") {
+    await sendAdminHelp(chatIdString);
+    return;
+  }
+
+  if (data === "admin:add") {
+    await startAdminProductWizard(chatIdString, context, username);
+    return;
+  }
+
+  if (data === "admin:products") {
+    await sendAdminProducts(chatIdString);
+    return;
+  }
+
+  if (data === "admin:cancel") {
+    await saveSession(chatIdString, "idle", { ...context, adminDraft: undefined }, username);
+    await sendAdminHelp(chatIdString);
+    return;
+  }
+
+  if (data === "admin:skip-description") {
+    await saveSession(
+      chatIdString,
+      "admin_image",
+      { ...context, adminDraft: { ...context.adminDraft, description: "" } },
+      username,
+    );
+    await sendMessage(
+      chatIdString,
+      "Now send the product image as a Telegram photo, or tap Skip image.",
+      buttons([menuButton("Skip image", "admin:skip-image")], [menuButton("Cancel", "admin:cancel")]),
+    );
+    return;
+  }
+
+  if (data === "admin:skip-image") {
+    if (context.adminDraft?.productId) {
+      await sendMessage(chatIdString, "An image is required when updating a product. Send the photo or tap Cancel.");
+      return;
+    }
+    await createProductFromDraft(chatIdString, context, undefined, username);
+    return;
+  }
+
+  if (data.startsWith("admin:category:")) {
+    const categoryId = Number(data.slice("admin:category:".length));
+    if (!Number.isInteger(categoryId)) return;
+    await saveSession(
+      chatIdString,
+      "admin_description",
+      { ...context, adminDraft: { ...context.adminDraft, categoryId } },
+      username,
+    );
+    await sendMessage(
+      chatIdString,
+      "Send a short product description, or tap Skip description.",
+      buttons([menuButton("Skip description", "admin:skip-description")], [menuButton("Cancel", "admin:cancel")]),
+    );
+    return;
+  }
+
+  if (data.startsWith("admin:image:")) {
+    const productId = Number(data.slice("admin:image:".length));
+    if (Number.isInteger(productId)) {
+      await startAdminImageUpdate(chatIdString, productId, context, username);
+    }
+    return;
+  }
+
+  if (data.startsWith("admin:product:")) {
+    const productId = Number(data.slice("admin:product:".length));
+    if (Number.isInteger(productId)) {
+      await sendAdminProductActions(chatIdString, productId);
+    }
+    return;
+  }
+
+  if (data.startsWith("admin:stock:")) {
+    const productId = Number(data.slice("admin:stock:".length));
+    if (!Number.isInteger(productId)) return;
+    const [product] = await db
+      .select({ inStock: productsTable.inStock })
+      .from(productsTable)
+      .where(eq(productsTable.id, productId));
+    if (!product) {
+      await sendMessage(chatIdString, "That product was not found.");
+      return;
+    }
+    await db
+      .update(productsTable)
+      .set({ inStock: !product.inStock })
+      .where(eq(productsTable.id, productId));
+    await sendAdminProductActions(chatIdString, productId);
+  }
+}
+
+async function handlePhoto(
+  chatId: string,
+  photo: Array<{ file_id: string; width: number; height: number }>,
+  username?: string | null,
+): Promise<void> {
+  const session = await getSession(chatId, username ?? undefined);
+  const context = session.context;
+  const adminAccess = TELEGRAM_ADMIN_CHAT_IDS.size
+    ? hasConfiguredAdminAccess(chatId)
+    : Boolean(context.adminUsername);
+  if (!adminAccess || session.state !== "admin_image") {
+    await sendMessage(chatId, "Use the buttons in the menu to choose an action.");
+    return;
+  }
+
+  const largestPhoto = [...photo].sort(
+    (left, right) => right.width * right.height - left.width * left.height,
+  )[0];
+  if (!largestPhoto) return;
+
+  if (context.adminDraft?.productId) {
+    await updateProductImage(
+      chatId,
+      context.adminDraft.productId,
+      largestPhoto.file_id,
+      context,
+      username,
+    );
+    return;
+  }
+
+  await createProductFromDraft(chatId, context, largestPhoto.file_id, username);
+}
+
 async function handleMessage(
   chatId: string,
   rawText: string,
@@ -875,9 +1391,73 @@ async function handleMessage(
     return;
   }
 
+  const adminAccess = TELEGRAM_ADMIN_CHAT_IDS.size
+    ? hasConfiguredAdminAccess(chatId)
+    : Boolean(context.adminUsername);
+
+  if (adminAccess && session.state === "admin_name") {
+    if (text.length < 2) {
+      await sendMessage(chatId, "Please send a product name.", buttons([menuButton("Cancel", "admin:cancel")]));
+      return;
+    }
+    await saveSession(
+      chatId,
+      "admin_price",
+      { ...context, adminDraft: { name: text } },
+      username,
+    );
+    await sendMessage(
+      chatId,
+      "Send the price in naira, for example 12500.",
+      buttons([menuButton("Cancel", "admin:cancel")]),
+    );
+    return;
+  }
+
+  if (adminAccess && session.state === "admin_price") {
+    const price = Number(text.replace(/[₦,]/g, ""));
+    if (!Number.isFinite(price) || price <= 0) {
+      await sendMessage(chatId, "Please send a valid price in naira.", buttons([menuButton("Cancel", "admin:cancel")]));
+      return;
+    }
+    await sendAdminCategories(
+      chatId,
+      { ...context, adminDraft: { ...context.adminDraft, price: String(price) } },
+      username,
+    );
+    return;
+  }
+
+  if (adminAccess && session.state === "admin_description") {
+    await saveSession(
+      chatId,
+      "admin_image",
+      { ...context, adminDraft: { ...context.adminDraft, description: text } },
+      username,
+    );
+    await sendMessage(
+      chatId,
+      "Now send the product image as a Telegram photo, or tap Skip image.",
+      buttons(
+        [menuButton("Skip image", "admin:skip-image")],
+        [menuButton("Cancel", "admin:cancel")],
+      ),
+    );
+    return;
+  }
+
+  if (adminAccess && session.state === "admin_image") {
+    await sendMessage(
+      chatId,
+      "Please send the image using Telegram's photo attachment button, or tap Skip image.",
+      buttons([menuButton("Skip image", "admin:skip-image")]),
+    );
+    return;
+  }
+
   if (normalized === "/cancel" || normalized === "cancel") {
     await saveSession(chatId, "idle", { ...context, lastResults: [] }, username);
-    await sendMessage(chatId, "Cancelled. Use /menu to start again.");
+    await sendMessage(chatId, "Cancelled.", buttons([menuButton("Main menu", "menu:main")]));
     return;
   }
 
@@ -914,7 +1494,11 @@ async function handleMessage(
       { ...context, customerName: text },
       username,
     );
-    await sendMessage(chatId, "What phone number should we use for delivery updates?");
+    await sendMessage(
+      chatId,
+      "What phone number should we use for delivery updates?",
+      buttons([menuButton("Cancel checkout", "checkout:cancel")]),
+    );
     return;
   }
 
@@ -929,7 +1513,11 @@ async function handleMessage(
       { ...context, customerPhone: text },
       username,
     );
-    await sendMessage(chatId, "What email address should we attach to the order?");
+    await sendMessage(
+      chatId,
+      "What email address should we attach to the order?",
+      buttons([menuButton("Cancel checkout", "checkout:cancel")]),
+    );
     return;
   }
 
@@ -944,7 +1532,11 @@ async function handleMessage(
       { ...context, customerEmail: text },
       username,
     );
-    await sendMessage(chatId, "What is the full delivery address?");
+    await sendMessage(
+      chatId,
+      "What is the full delivery address?",
+      buttons([menuButton("Cancel checkout", "checkout:cancel")]),
+    );
     return;
   }
 
@@ -955,13 +1547,21 @@ async function handleMessage(
       { ...context, deliveryAddress: text },
       username,
     );
-    await sendMessage(chatId, "Which city should we deliver to?");
+    await sendMessage(
+      chatId,
+      "Which city should we deliver to?",
+      buttons([menuButton("Cancel checkout", "checkout:cancel")]),
+    );
     return;
   }
 
   if (session.state === "city") {
     await saveSession(chatId, "state", { ...context, city: text }, username);
-    await sendMessage(chatId, "Which state is the delivery in?");
+    await sendMessage(
+      chatId,
+      "Which state is the delivery in?",
+      buttons([menuButton("Cancel checkout", "checkout:cancel")]),
+    );
     return;
   }
 
@@ -977,8 +1577,12 @@ async function handleMessage(
         `Email: ${nextContext.customerEmail}`,
         `Delivery: ${nextContext.deliveryAddress}, ${nextContext.city}, ${nextContext.state}`,
         "",
-        "Reply confirm to place it, or /cancel to start over.",
+        "Tap Confirm order to place it.",
       ].join("\n"),
+      buttons(
+        [menuButton("Confirm order", "checkout:confirm")],
+        [menuButton("Cancel checkout", "checkout:cancel")],
+      ),
     );
     return;
   }
@@ -1025,11 +1629,22 @@ async function handleMessage(
 }
 
 async function handleUpdate(update: TelegramUpdate): Promise<void> {
+  if (update.callback_query) {
+    await handleCallbackQuery(update.callback_query);
+    return;
+  }
+
   const message = update.message;
   const chatId = message?.chat?.id;
-  const text = message?.text;
-  if (!chatId || !text) return;
-  await handleMessage(String(chatId), text, message.from?.username ?? null);
+  if (!chatId) return;
+  const username = message?.from?.username ?? null;
+  if (message?.photo?.length) {
+    await handlePhoto(String(chatId), message.photo, username);
+    return;
+  }
+  if (message?.text) {
+    await handleMessage(String(chatId), message.text, username);
+  }
 }
 
 function hasValidWebhookSecret(req: { header(name: string): string | undefined }): boolean {
@@ -1047,7 +1662,7 @@ async function pollTelegram(): Promise<void> {
         (await telegramRequest<TelegramUpdate[]>("getUpdates", {
           offset,
           timeout: 25,
-          allowed_updates: ["message"],
+          allowed_updates: ["message", "callback_query"],
         })) ?? [];
       if (telegramApiUnauthorized || telegramPollingConflict) {
         polling = false;
@@ -1085,6 +1700,7 @@ export function startTelegramBot(): void {
       { command: "cart", description: "View your cart" },
       { command: "checkout", description: "Place your order" },
       { command: "myid", description: "Show your Telegram chat ID" },
+      { command: "admin", description: "Open the admin panel" },
     ],
   });
   void pollTelegram();
@@ -1101,6 +1717,38 @@ router.get("/telegram/status", (_req, res): void => {
     pollingEnabled: Boolean(BOT_TOKEN && !USE_WEBHOOK),
     webhookSecretConfigured: Boolean(WEBHOOK_SECRET),
   });
+});
+
+router.get("/telegram/image/:fileId", async (req, res): Promise<void> => {
+  if (!BOT_TOKEN) {
+    res.sendStatus(404);
+    return;
+  }
+
+  const file = await telegramRequest<{ file_path?: string }>("getFile", {
+    file_id: req.params.fileId,
+  });
+  if (!file?.file_path) {
+    res.sendStatus(404);
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `${TELEGRAM_API}/file/bot${BOT_TOKEN}/${file.file_path}`,
+    );
+    if (!response.ok) {
+      res.sendStatus(404);
+      return;
+    }
+    const contentType = response.headers.get("content-type");
+    if (contentType) res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(Buffer.from(await response.arrayBuffer()));
+  } catch (error) {
+    logger.error({ error }, "Telegram image proxy failed");
+    res.sendStatus(502);
+  }
 });
 
 router.post("/telegram/webhook", (req, res): void => {

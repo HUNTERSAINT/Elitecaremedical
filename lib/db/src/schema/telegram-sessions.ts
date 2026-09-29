@@ -16,6 +16,15 @@ export const telegramSessionContextSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   adminUsername: z.string().optional(),
+  adminDraft: z
+    .object({
+      productId: z.number().int().positive().optional(),
+      name: z.string().optional(),
+      price: z.string().optional(),
+      categoryId: z.number().int().positive().optional(),
+      description: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type TelegramSessionContext = z.infer<
