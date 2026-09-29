@@ -31,6 +31,7 @@ const TELEGRAM_ADMIN_CHAT_IDS = new Set(
     .filter(Boolean),
 );
 const DELIVERY_FEE = 2000;
+let telegramApiUnauthorized = false;
 
 type TelegramUser = {
   id: number;
@@ -54,6 +55,7 @@ type TelegramUpdate = {
 type TelegramApiResponse<T> = {
   ok: boolean;
   result?: T;
+  error_code?: number;
   description?: string;
 };
 
@@ -213,6 +215,9 @@ async function telegramRequest<T>(
   const body = (await response.json()) as TelegramApiResponse<T>;
 
   if (!response.ok || !body.ok) {
+    if (response.status === 401 || body.error_code === 401) {
+      telegramApiUnauthorized = true;
+    }
     logger.error(
       { method, status: response.status, description: body.description },
       "Telegram API request failed",
@@ -1040,6 +1045,13 @@ async function pollTelegram(): Promise<void> {
           timeout: 25,
           allowed_updates: ["message"],
         })) ?? [];
+      if (telegramApiUnauthorized) {
+        polling = false;
+        logger.error(
+          "Telegram polling stopped because TELEGRAM_BOT_TOKEN was rejected",
+        );
+        break;
+      }
       for (const update of updates) {
         offset = Math.max(offset, update.update_id + 1);
         try {
@@ -1057,6 +1069,7 @@ async function pollTelegram(): Promise<void> {
 
 export function startTelegramBot(): void {
   if (!BOT_TOKEN || USE_WEBHOOK || polling) return;
+  telegramApiUnauthorized = false;
   polling = true;
   void telegramRequest("setMyCommands", {
     commands: [
