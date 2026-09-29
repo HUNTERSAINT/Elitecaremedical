@@ -23,3 +23,4 @@ export * from "./generated/types/productInput";
 export * from "./generated/types/productListResponse";
 export * from "./generated/types/productUpdate";
 export * from './generated/types';
+export * from './generated/api';

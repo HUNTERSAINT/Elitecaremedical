@@ -111,7 +111,7 @@ interface AddProductModalProps {
 
 function AddProductModal({ onClose }: AddProductModalProps) {
   const [form, setForm] = useState({
-    name: '', slug: '', description: '', price: '', categoryId: '', brand: '', model: '', imageUrl: '', inStock: true, isFeatured: false,
+    name: '', slug: '', description: '', price: '', categoryId: '', brand: '', model: '', imageUrl: '', sizes: '', inStock: true, isFeatured: false,
   });
   const createProduct = useCreateProduct();
   const { data: categories } = useListCategories();
@@ -136,6 +136,7 @@ function AddProductModal({ onClose }: AddProductModalProps) {
         brand: form.brand || undefined,
         model: form.model || undefined,
         imageUrl: form.imageUrl || undefined,
+        sizes: form.sizes.split(',').map(size => size.trim()).filter(Boolean),
         inStock: form.inStock,
         isFeatured: form.isFeatured,
       },
@@ -170,6 +171,7 @@ function AddProductModal({ onClose }: AddProductModalProps) {
             { label: 'Brand', key: 'brand', placeholder: 'e.g. 3M, Omron' },
             { label: 'Model', key: 'model', placeholder: 'Model number' },
             { label: 'Image URL', key: 'imageUrl', placeholder: 'https://...' },
+            { label: 'Sizes (optional)', key: 'sizes', placeholder: 'S, M, L, XL' },
           ].map(f => (
             <div key={f.key} className={f.key === 'name' ? 'sm:col-span-2' : ''}>
               <label className="text-sm font-medium text-foreground block mb-1.5">{f.label}</label>

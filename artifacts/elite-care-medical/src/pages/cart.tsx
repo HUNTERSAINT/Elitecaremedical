@@ -46,7 +46,7 @@ export default function Cart() {
                 <AnimatePresence>
                   {items.map(item => (
                     <motion.div
-                      key={item.product.id}
+                      key={`${item.product.id}-${item.size ?? 'default'}`}
                       initial={{ opacity: 0, y: 12 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, x: -20, height: 0 }}
@@ -71,6 +71,7 @@ export default function Cart() {
                         <h3 className="font-semibold text-sm text-foreground line-clamp-2 mb-1" data-testid={`text-cart-item-name-${item.product.id}`}>
                           {item.product.name}
                         </h3>
+                         {item.size && <div className="text-xs text-muted-foreground mb-1">Size: {item.size}</div>}
                         <div className="font-bold text-primary text-sm" data-testid={`text-cart-item-price-${item.product.id}`}>
                           {formatNaira(item.product.price)}
                         </div>
@@ -79,7 +80,7 @@ export default function Cart() {
                       {/* Quantity + Remove */}
                       <div className="flex flex-col items-end justify-between">
                         <button
-                          onClick={() => removeFromCart(item.product.id)}
+                          onClick={() => removeFromCart(item.product.id, item.size)}
                           className="text-muted-foreground hover:text-destructive transition-colors p-1"
                           data-testid={`button-remove-cart-item-${item.product.id}`}
                         >
@@ -92,7 +93,7 @@ export default function Cart() {
                           </div>
                           <div className="flex items-center border border-border rounded-lg overflow-hidden">
                             <button
-                              onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                              onClick={() => updateQuantity(item.product.id, item.quantity - 1, item.size)}
                               className="px-2.5 py-1.5 hover:bg-muted transition-colors"
                               data-testid={`button-decrease-qty-${item.product.id}`}
                             >
@@ -100,7 +101,7 @@ export default function Cart() {
                             </button>
                             <span className="px-3 text-sm font-semibold" data-testid={`text-cart-qty-${item.product.id}`}>{item.quantity}</span>
                             <button
-                              onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                              onClick={() => updateQuantity(item.product.id, item.quantity + 1, item.size)}
                               className="px-2.5 py-1.5 hover:bg-muted transition-colors"
                               data-testid={`button-increase-qty-${item.product.id}`}
                             >

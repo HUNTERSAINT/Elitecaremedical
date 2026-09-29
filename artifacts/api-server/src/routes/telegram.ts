@@ -89,6 +89,7 @@ type OrderNotification = {
   items: Array<{
     productName: string;
     quantity: number;
+    size?: string | null;
     totalPrice: number;
   }>;
   total: string;
@@ -122,6 +123,7 @@ function getContext(value: unknown): TelegramSessionContext {
       return null;
     }
   })() as Partial<TelegramSessionContext> | null;
+  const pendingProductId = parsed?.pendingProductId;
 
   return {
     cart: Array.isArray(parsed?.cart)
@@ -130,7 +132,9 @@ function getContext(value: unknown): TelegramSessionContext {
             Number.isInteger(item?.productId) &&
             item.productId > 0 &&
             Number.isInteger(item?.quantity) &&
-            item.quantity > 0,
+            item.quantity > 0 &&
+            (item?.size === undefined ||
+              (typeof item.size === "string" && item.size.trim().length > 0)),
         )
       : [],
     lastResults: Array.isArray(parsed?.lastResults)
@@ -150,6 +154,11 @@ function getContext(value: unknown): TelegramSessionContext {
       : {}),
     ...(typeof parsed?.city === "string" ? { city: parsed.city } : {}),
     ...(typeof parsed?.state === "string" ? { state: parsed.state } : {}),
+    ...(typeof pendingProductId === "number" &&
+    Number.isInteger(pendingProductId) &&
+    pendingProductId > 0
+      ? { pendingProductId }
+      : {}),
     ...(typeof parsed?.adminUsername === "string"
       ? { adminUsername: parsed.adminUsername }
       : {}),
@@ -262,6 +271,27 @@ async function sendMessage(
   });
 }
 
+async function sendPhoto(
+  chatId: string,
+  photo: string,
+  caption: string,
+  replyMarkup?: TelegramReplyMarkup,
+): Promise<void> {
+  await telegramRequest("sendPhoto", {
+    chat_id: chatId,
+    photo,
+    caption,
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  });
+}
+
+async function deleteMessage(chatId: string, messageId: number): Promise<void> {
+  await telegramRequest("deleteMessage", {
+    chat_id: chatId,
+    message_id: messageId,
+  });
+}
+
 async function answerCallbackQuery(
   callbackQueryId: string,
   text?: string,
@@ -306,7 +336,7 @@ export async function notifyAdminsAboutOrder(
 ): Promise<void> {
   const itemLines = order.items.map(
     (item) =>
-      `• ${item.quantity} × ${item.productName} — ${formatNaira(item.totalPrice)}`,
+      `• ${item.quantity} × ${item.productName}${item.size ? ` (${item.size})` : ""} — ${formatNaira(item.totalPrice)}`,
   );
 
   await notifyTelegramAdmins(
@@ -353,11 +383,84 @@ async function sendWelcome(chatId: string): Promise<void> {
       "Shop medical equipment directly here. Use the buttons below to continue.",
     ].join("\n"),
     buttons(
-      [menuButton("Browse products", "shop:featured")],
+      [menuButton("Browse products", "shop:categories")],
       [menuButton("View cart", "cart:view"), menuButton("Checkout", "checkout:start")],
       [menuButton("Clear cart", "cart:clear")],
     ),
   );
+}
+
+async function sendCategories(
+  chatId: string,
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<void> {
+  const categories = await db
+    .select({ id: categoriesTable.id, name: categoriesTable.name })
+    .from(categoriesTable)
+    .orderBy(categoriesTable.name);
+
+  await saveSession(chatId, "idle", { ...context, lastResults: [] }, username);
+  await sendMessage(
+    chatId,
+    "Choose a product category:",
+    buttons(
+      ...categories.map((category) => [
+        menuButton(category.name, `shop:category:${category.id}`),
+      ]),
+      [menuButton("View all products", "shop:all")],
+      [menuButton("Main menu", "menu:main")],
+    ),
+  );
+}
+
+async function sendProductDetails(
+  chatId: string,
+  productId: number,
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<void> {
+  const [product] = await db
+    .select({
+      id: productsTable.id,
+      name: productsTable.name,
+      description: productsTable.description,
+      price: productsTable.price,
+      imageUrl: productsTable.imageUrl,
+      telegramFileId: productsTable.telegramFileId,
+      sizes: productsTable.sizes,
+      inStock: productsTable.inStock,
+    })
+    .from(productsTable)
+    .where(eq(productsTable.id, productId));
+
+  if (!product || !product.inStock) {
+    await sendMessage(chatId, "That product is no longer available.", buttons([
+      menuButton("Browse categories", "shop:categories"),
+    ]));
+    return;
+  }
+
+  const sizes = product.sizes ?? [];
+  const caption = [
+    product.name,
+    `Price: ${formatNaira(Number(product.price))}`,
+    sizes.length ? `Available sizes: ${sizes.join(", ")}` : "",
+    product.description ?? "",
+    "",
+    "Choose an option:",
+  ].filter(Boolean).join("\n");
+  const replyMarkup = buttons(
+    [menuButton("Add to cart", `cart:add:${product.id}`)],
+    [menuButton("Back to products", "shop:categories"), menuButton("View cart", "cart:view")],
+  );
+
+  if (product.telegramFileId) {
+    await sendPhoto(chatId, product.telegramFileId, caption, replyMarkup);
+  } else {
+    await sendMessage(chatId, caption, replyMarkup);
+  }
+  await saveSession(chatId, "idle", { ...context, lastResults: [product.id] }, username);
 }
 
 async function sendCart(
@@ -378,6 +481,7 @@ async function sendCart(
       name: productsTable.name,
       price: productsTable.price,
       inStock: productsTable.inStock,
+      sizes: productsTable.sizes,
     })
     .from(productsTable)
     .where(inArray(productsTable.id, context.cart.map((item) => item.productId)));
@@ -388,7 +492,7 @@ async function sendCart(
     return [
       `${item.quantity} × ${product.name} — ${formatNaira(
         Number(product.price) * item.quantity,
-      )}${product.inStock ? "" : " (out of stock)"}`,
+      )}${item.size ? ` — Size: ${item.size}` : ""}${product.inStock ? "" : " (out of stock)"}`,
     ];
   });
   const subtotal = context.cart.reduce((sum, item) => {
@@ -410,7 +514,7 @@ async function sendCart(
     ].join("\n"),
     buttons(
       [menuButton("Checkout", "checkout:start")],
-      [menuButton("Clear cart", "cart:clear"), menuButton("Browse more", "shop:featured")],
+      [menuButton("Clear cart", "cart:clear"), menuButton("Browse more", "shop:categories")],
     ),
   );
 }
@@ -420,7 +524,16 @@ async function searchProducts(
   query: string,
   context: TelegramSessionContext,
   username?: string | null,
+  categoryId?: number,
 ): Promise<void> {
+  const conditions = [eq(productsTable.inStock, true)];
+  if (query.trim()) {
+    conditions.push(ilike(productsTable.name, `%${query}%`));
+  }
+  if (categoryId) {
+    conditions.push(eq(productsTable.categoryId, categoryId));
+  }
+
   const products = await db
     .select({
       id: productsTable.id,
@@ -429,12 +542,7 @@ async function searchProducts(
       inStock: productsTable.inStock,
     })
     .from(productsTable)
-    .where(
-      and(
-        ilike(productsTable.name, `%${query}%`),
-        eq(productsTable.inStock, true),
-      ),
-    )
+    .where(and(...conditions))
     .orderBy(desc(productsTable.isFeatured), desc(productsTable.createdAt))
     .limit(8);
 
@@ -459,18 +567,98 @@ async function searchProducts(
           `• ${product.name} — ${formatNaira(Number(product.price))}`,
       ),
       "",
-      "Choose a product to add it to your cart.",
+      "Choose a product to view its image and details.",
     ].join("\n"),
     buttons(
       ...products.map((product) => [
         menuButton(
-          `Add ${product.name.slice(0, 28)}`,
-          `cart:add:${product.id}`,
+          `${product.name.slice(0, 30)} — ${formatNaira(Number(product.price))}`,
+          `product:view:${product.id}`,
         ),
       ]),
-      [menuButton("View cart", "cart:view"), menuButton("Main menu", "menu:main")],
+      [menuButton("Categories", "shop:categories"), menuButton("View cart", "cart:view")],
     ),
   );
+}
+
+async function promptForProductSize(
+  chatId: string,
+  productId: number,
+  sizes: string[],
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<void> {
+  await saveSession(
+    chatId,
+    "select_size",
+    { ...context, pendingProductId: productId },
+    username,
+  );
+  await sendMessage(
+    chatId,
+    "Choose a size before continuing:",
+    buttons(
+      ...sizes.map((size, index) => [
+        menuButton(size, `cart:size:${productId}:${index}`),
+      ]),
+      [menuButton("Cancel", "checkout:cancel")],
+    ),
+  );
+}
+
+async function addProductToCart(
+  chatId: string,
+  productId: number,
+  size: string | undefined,
+  context: TelegramSessionContext,
+  username?: string | null,
+): Promise<TelegramSessionContext | null> {
+  const [product] = await db
+    .select({
+      id: productsTable.id,
+      name: productsTable.name,
+      inStock: productsTable.inStock,
+      sizes: productsTable.sizes,
+    })
+    .from(productsTable)
+    .where(eq(productsTable.id, productId));
+
+  if (!product || !product.inStock) {
+    await sendMessage(chatId, "That product is no longer in stock.");
+    return null;
+  }
+
+  const productSizes = product.sizes ?? [];
+  if (productSizes.length && !size) {
+    await promptForProductSize(chatId, productId, productSizes, context, username);
+    return null;
+  }
+
+  const existing = context.cart.find(
+    (item) => item.productId === productId && item.size === size,
+  );
+  const cart = existing
+    ? context.cart.map((item) =>
+        item.productId === productId && item.size === size
+          ? { ...item, quantity: item.quantity + 1 }
+          : item,
+      )
+    : [...context.cart, { productId, quantity: 1, ...(size ? { size } : {}) }];
+  const nextContext = {
+    ...context,
+    cart,
+    pendingProductId: undefined,
+  };
+  await saveSession(chatId, "idle", nextContext, username);
+  await sendMessage(
+    chatId,
+    `${product.name}${size ? ` (${size})` : ""} added to your cart.`,
+    buttons(
+      [menuButton("View cart", "cart:view"), menuButton("Checkout", "checkout:start")],
+      [menuButton("Browse more", "shop:categories")],
+    ),
+  );
+  return nextContext;
 }
 
 async function beginCheckout(
@@ -482,6 +670,30 @@ async function beginCheckout(
     await sendCart(chatId, context);
     return;
   }
+
+  const products = await db
+    .select({ id: productsTable.id, sizes: productsTable.sizes })
+    .from(productsTable)
+    .where(inArray(productsTable.id, context.cart.map((item) => item.productId)));
+  const productMap = new Map(products.map((product) => [product.id, product]));
+  const itemMissingSize = context.cart.find((item) => {
+    const product = productMap.get(item.productId);
+    return Boolean(product?.sizes?.length && !item.size);
+  });
+  if (itemMissingSize) {
+    const product = productMap.get(itemMissingSize.productId);
+    if (product?.sizes?.length) {
+      await promptForProductSize(
+        chatId,
+        itemMissingSize.productId,
+        product.sizes,
+        context,
+        username,
+      );
+    }
+    return;
+  }
+
   await saveSession(chatId, "name", context, username);
   await sendMessage(
     chatId,
@@ -516,6 +728,7 @@ async function createTelegramOrder(
         productName: product.name,
         productImage: product.imageUrl,
         quantity: item.quantity,
+        size: item.size ?? null,
         unitPrice,
         totalPrice: unitPrice * item.quantity,
       },
@@ -619,6 +832,8 @@ async function createTelegramOrder(
       chatId,
       [
         `Order #${order.id} received.`,
+        `Subtotal: ${formatNaira(subtotal)}`,
+        `Delivery: ${formatNaira(DELIVERY_FEE)}`,
         `Total: ${formatNaira(Number(order.total))}`,
         "",
         "Tap Pay now to complete your payment securely with Paystack.",
@@ -637,6 +852,8 @@ async function createTelegramOrder(
     chatId,
     [
       `Order #${order.id} received.`,
+      `Subtotal: ${formatNaira(subtotal)}`,
+      `Delivery: ${formatNaira(DELIVERY_FEE)}`,
       `Total: ${formatNaira(Number(order.total))}`,
       "",
       "Online payment is temporarily unavailable. Please try checkout again later.",
@@ -693,22 +910,31 @@ async function sendAdminHelp(chatId: string): Promise<void> {
   );
 }
 
-async function sendAdminProducts(chatId: string, search?: string): Promise<void> {
+async function sendAdminProducts(
+  chatId: string,
+  search?: string,
+  page = 1,
+): Promise<void> {
+  const limit = 20;
   const products = await db
     .select({
       id: productsTable.id,
       name: productsTable.name,
       price: productsTable.price,
       inStock: productsTable.inStock,
+      sizes: productsTable.sizes,
       categoryName: categoriesTable.name,
     })
     .from(productsTable)
     .leftJoin(categoriesTable, eq(productsTable.categoryId, categoriesTable.id))
     .where(search ? ilike(productsTable.name, `%${search}%`) : undefined)
     .orderBy(desc(productsTable.createdAt))
-    .limit(20);
+    .limit(limit + 1)
+    .offset((page - 1) * limit);
+  const hasNextPage = products.length > limit;
+  const visibleProducts = products.slice(0, limit);
 
-  if (!products.length) {
+  if (!visibleProducts.length) {
     await sendMessage(
       chatId,
       "No products matched that search.",
@@ -719,14 +945,20 @@ async function sendAdminProducts(chatId: string, search?: string): Promise<void>
 
   await sendMessage(
     chatId,
-    "Catalog products:",
+      `Catalog products${search ? ` matching “${search}”` : ""} (page ${page}):`,
     buttons(
-      ...products.map((product) => [
+        ...visibleProducts.map((product) => [
         menuButton(
           `#${product.id} ${product.name.slice(0, 24)} — ${formatNaira(Number(product.price))}`,
           `admin:product:${product.id}`,
         ),
       ]),
+      ...(page > 1
+        ? [[menuButton("Previous", `admin:products:page:${page - 1}`)]]
+        : []),
+      ...(hasNextPage
+        ? [[menuButton("Next", `admin:products:page:${page + 1}`)]]
+        : []),
       [menuButton("Add product", "admin:add"), menuButton("Admin menu", "admin:menu")],
     ),
   );
@@ -742,6 +974,7 @@ async function sendAdminProductActions(
       name: productsTable.name,
       price: productsTable.price,
       imageUrl: productsTable.imageUrl,
+      sizes: productsTable.sizes,
       inStock: productsTable.inStock,
     })
     .from(productsTable)
@@ -763,6 +996,7 @@ async function sendAdminProductActions(
       `Price: ${formatNaira(Number(product.price))}`,
       `Status: ${product.inStock ? "In stock" : "Out of stock"}`,
       `Image: ${product.imageUrl ? "set" : "not set"}`,
+      `Sizes: ${product.sizes?.length ? product.sizes.join(", ") : "not size-specific"}`,
     ].join("\n"),
     buttons(
       [menuButton("Update image", `admin:image:${product.id}`)],
@@ -867,6 +1101,8 @@ async function createProductFromDraft(
       description: draft.description || null,
       imageUrl,
       images: imageUrl ? [imageUrl] : [],
+      telegramFileId: imageFileId ?? null,
+      sizes: draft.sizes ?? [],
     })
     .returning({ id: productsTable.id, name: productsTable.name });
 
@@ -891,7 +1127,7 @@ async function updateProductImage(
   const imageUrl = telegramImageUrl(fileId);
   const [product] = await db
     .update(productsTable)
-    .set({ imageUrl, images: [imageUrl] })
+    .set({ imageUrl, images: [imageUrl], telegramFileId: fileId })
     .where(eq(productsTable.id, productId))
     .returning({ id: productsTable.id, name: productsTable.name });
 
@@ -1127,7 +1363,7 @@ async function verifyTelegramPayment(
     await sendMessage(
       chatId,
       `Payment confirmed for order #${order.id}. Your order is now being processed.`,
-      buttons([menuButton("Continue shopping", "shop:featured")]),
+      buttons([menuButton("Continue shopping", "shop:categories")]),
     );
   } catch (error) {
     logger.error({ error, reference }, "Telegram payment verification failed");
@@ -1149,6 +1385,9 @@ async function handleCallbackQuery(callbackQuery: NonNullable<TelegramUpdate["ca
   const username = callbackQuery.from?.username ?? null;
   const session = await getSession(chatIdString, username ?? undefined);
   const context = session.context;
+  if (callbackQuery.message?.message_id) {
+    await deleteMessage(chatIdString, callbackQuery.message.message_id);
+  }
 
   if (data === "menu:main") {
     await saveSession(chatIdString, "idle", { ...context, lastResults: [] }, username);
@@ -1156,8 +1395,29 @@ async function handleCallbackQuery(callbackQuery: NonNullable<TelegramUpdate["ca
     return;
   }
 
-  if (data === "shop:featured") {
+  if (data === "shop:categories") {
+    await sendCategories(chatIdString, context, username);
+    return;
+  }
+
+  if (data === "shop:all") {
     await searchProducts(chatIdString, "", context, username);
+    return;
+  }
+
+  if (data.startsWith("shop:category:")) {
+    const categoryId = Number(data.slice("shop:category:".length));
+    if (Number.isInteger(categoryId)) {
+      await searchProducts(chatIdString, "", context, username, categoryId);
+    }
+    return;
+  }
+
+  if (data.startsWith("product:view:")) {
+    const productId = Number(data.slice("product:view:".length));
+    if (Number.isInteger(productId)) {
+      await sendProductDetails(chatIdString, productId, context, username);
+    }
     return;
   }
 
@@ -1171,7 +1431,7 @@ async function handleCallbackQuery(callbackQuery: NonNullable<TelegramUpdate["ca
     await sendMessage(
       chatIdString,
       "Your cart is empty now.",
-      buttons([menuButton("Browse products", "shop:featured")]),
+      buttons([menuButton("Browse products", "shop:categories")]),
     );
     return;
   }
@@ -1179,31 +1439,39 @@ async function handleCallbackQuery(callbackQuery: NonNullable<TelegramUpdate["ca
   if (data.startsWith("cart:add:")) {
     const productId = Number(data.slice("cart:add:".length));
     if (!Number.isInteger(productId)) return;
+    await addProductToCart(chatIdString, productId, undefined, context, username);
+    return;
+  }
+
+  if (data.startsWith("cart:size:")) {
+    const [, , rawProductId, rawSizeIndex] = data.split(":");
+    const productId = Number(rawProductId);
+    const sizeIndex = Number(rawSizeIndex);
+    if (!Number.isInteger(productId) || !Number.isInteger(sizeIndex)) return;
     const [product] = await db
-      .select({ id: productsTable.id, name: productsTable.name, inStock: productsTable.inStock })
+      .select({ id: productsTable.id, sizes: productsTable.sizes })
       .from(productsTable)
       .where(eq(productsTable.id, productId));
-    if (!product || !product.inStock) {
-      await sendMessage(chatIdString, "That product is no longer in stock.");
+    const size = product?.sizes?.[sizeIndex];
+    if (!product || !size) {
+      await sendMessage(chatIdString, "That size is no longer available.");
       return;
     }
-    const existing = context.cart.find((item) => item.productId === productId);
-    const cart = existing
-      ? context.cart.map((item) =>
-          item.productId === productId
-            ? { ...item, quantity: item.quantity + 1 }
-            : item,
-        )
-      : [...context.cart, { productId, quantity: 1 }];
-    await saveSession(chatIdString, "idle", { ...context, cart }, username);
-    await sendMessage(
+    const wasSelectingForCheckout = session.state === "select_size";
+    const nextContext = {
+      ...context,
+      pendingProductId: undefined,
+    };
+    const addedContext = await addProductToCart(
       chatIdString,
-      `${product.name} added to your cart.`,
-      buttons(
-        [menuButton("View cart", "cart:view"), menuButton("Checkout", "checkout:start")],
-        [menuButton("Browse more", "shop:featured")],
-      ),
+      productId,
+      size,
+      nextContext,
+      username,
     );
+    if (wasSelectingForCheckout && addedContext) {
+      await beginCheckout(chatIdString, addedContext, username);
+    }
     return;
   }
 
@@ -1255,6 +1523,14 @@ async function handleCallbackQuery(callbackQuery: NonNullable<TelegramUpdate["ca
     return;
   }
 
+  if (data.startsWith("admin:products:page:")) {
+    const page = Number(data.slice("admin:products:page:".length));
+    if (Number.isInteger(page) && page > 0) {
+      await sendAdminProducts(chatIdString, undefined, page);
+    }
+    return;
+  }
+
   if (data === "admin:cancel") {
     await saveSession(chatIdString, "idle", { ...context, adminDraft: undefined }, username);
     await sendAdminHelp(chatIdString);
@@ -1264,8 +1540,23 @@ async function handleCallbackQuery(callbackQuery: NonNullable<TelegramUpdate["ca
   if (data === "admin:skip-description") {
     await saveSession(
       chatIdString,
-      "admin_image",
+      "admin_sizes",
       { ...context, adminDraft: { ...context.adminDraft, description: "" } },
+      username,
+    );
+    await sendMessage(
+      chatIdString,
+      "Send sizes separated by commas, for example S, M, L, or tap No sizes.",
+      buttons([menuButton("No sizes", "admin:skip-sizes")], [menuButton("Cancel", "admin:cancel")]),
+    );
+    return;
+  }
+
+  if (data === "admin:skip-sizes") {
+    await saveSession(
+      chatIdString,
+      "admin_image",
+      { ...context, adminDraft: { ...context.adminDraft, sizes: [] } },
       username,
     );
     await sendMessage(
@@ -1431,17 +1722,44 @@ async function handleMessage(
   if (adminAccess && session.state === "admin_description") {
     await saveSession(
       chatId,
-      "admin_image",
+      "admin_sizes",
       { ...context, adminDraft: { ...context.adminDraft, description: text } },
       username,
     );
     await sendMessage(
       chatId,
-      "Now send the product image as a Telegram photo, or tap Skip image.",
+      "Send sizes separated by commas, for example S, M, L, or tap No sizes.",
       buttons(
-        [menuButton("Skip image", "admin:skip-image")],
+        [menuButton("No sizes", "admin:skip-sizes")],
         [menuButton("Cancel", "admin:cancel")],
       ),
+    );
+    return;
+  }
+
+  if (adminAccess && session.state === "admin_sizes") {
+    const sizes = text
+      .split(",")
+      .map((size) => size.trim())
+      .filter(Boolean)
+      .filter((size, index, values) => values.indexOf(size) === index);
+    if (!sizes.length) {
+      await sendMessage(chatId, "Send at least one size, or tap No sizes.", buttons([
+        menuButton("No sizes", "admin:skip-sizes"),
+        menuButton("Cancel", "admin:cancel"),
+      ]));
+      return;
+    }
+    await saveSession(
+      chatId,
+      "admin_image",
+      { ...context, adminDraft: { ...context.adminDraft, sizes } },
+      username,
+    );
+    await sendMessage(
+      chatId,
+      "Now send the product image as a Telegram photo, or tap Skip image.",
+      buttons([menuButton("Skip image", "admin:skip-image")], [menuButton("Cancel", "admin:cancel")]),
     );
     return;
   }

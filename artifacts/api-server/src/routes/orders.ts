@@ -69,7 +69,7 @@ router.post("/orders", async (req, res): Promise<void> => {
 
   const productMap = new Map(products.map((p) => [p.id, p]));
 
-  const orderItems = items.map((item: { productId: number; quantity: number }) => {
+  const orderItems = items.map((item: { productId: number; quantity: number; size?: string }) => {
     const product = productMap.get(item.productId);
     if (!product) throw new Error(`Product ${item.productId} not found`);
     const unitPrice = parseFloat(product.price);
@@ -78,6 +78,7 @@ router.post("/orders", async (req, res): Promise<void> => {
       productName: product.name,
       productImage: product.imageUrl,
       quantity: item.quantity,
+      size: item.size ?? null,
       unitPrice,
       totalPrice: unitPrice * item.quantity,
     };

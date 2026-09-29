@@ -13,6 +13,8 @@ export const productsTable = pgTable("products", {
   categoryId: integer("category_id").notNull().references(() => categoriesTable.id),
   imageUrl: text("image_url"),
   images: text("images").array(),
+  telegramFileId: text("telegram_file_id"),
+  sizes: text("sizes").array(),
   inStock: boolean("in_stock").notNull().default(true),
   isFeatured: boolean("is_featured").notNull().default(false),
   brand: text("brand"),

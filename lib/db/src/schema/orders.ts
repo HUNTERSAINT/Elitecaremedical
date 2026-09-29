@@ -15,6 +15,7 @@ export const ordersTable = pgTable("orders", {
     productName: string;
     productImage: string | null;
     quantity: number;
+    size?: string | null;
     unitPrice: number;
     totalPrice: number;
   }>>(),

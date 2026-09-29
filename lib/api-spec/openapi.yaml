@@ -468,6 +468,10 @@ components:
           type: array
           items:
             type: string
+        sizes:
+          type: array
+          items:
+            type: string
         inStock:
           type: boolean
         isFeatured:
@@ -504,6 +508,10 @@ components:
           type: array
           items:
             type: string
+        sizes:
+          type: array
+          items:
+            type: string
         inStock:
           type: boolean
         isFeatured:
@@ -534,6 +542,10 @@ components:
         imageUrl:
           type: ["string", "null"]
         images:
+          type: array
+          items:
+            type: string
+        sizes:
           type: array
           items:
             type: string
@@ -575,6 +587,8 @@ components:
           type: ["string", "null"]
         quantity:
           type: integer
+        size:
+          type: ["string", "null"]
         unitPrice:
           type: number
         totalPrice:
@@ -661,6 +675,8 @@ components:
         quantity:
           type: integer
           minimum: 1
+        size:
+          type: string
 
     OrderStatusUpdate:
       type: object

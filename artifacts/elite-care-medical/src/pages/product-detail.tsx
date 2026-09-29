@@ -42,6 +42,7 @@ function parseSpecifications(raw: string | null | undefined): Record<string, str
 export default function ProductDetail() {
   const { slug } = useParams<{ slug: string }>();
   const [quantity, setQuantity] = useState(1);
+  const [selectedSize, setSelectedSize] = useState<string>();
   const [activeImage, setActiveImage] = useState(0);
   const { addToCart } = useCart();
   const { toast } = useToast();
@@ -64,7 +65,11 @@ export default function ProductDetail() {
 
   const handleAddToCart = () => {
     if (!product) return;
-    addToCart(product, quantity);
+    if (product.sizes?.length && !selectedSize) {
+      toast({ title: 'Choose a size', description: 'Select a size before adding this product to your cart.', variant: 'destructive' });
+      return;
+    }
+    addToCart(product, quantity, selectedSize);
     toast({ title: 'Added to cart', description: `${quantity}x ${product.name} added to cart.` });
   };
 
@@ -206,6 +211,28 @@ export default function ProductDetail() {
               {product.description && (
                 <p className="text-muted-foreground text-sm leading-relaxed mb-6">{product.description}</p>
               )}
+
+              {product.sizes?.length ? (
+                <div className="mb-6">
+                  <div className="text-sm font-semibold mb-2">Choose a size</div>
+                  <div className="flex flex-wrap gap-2">
+                    {product.sizes.map(size => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => setSelectedSize(size)}
+                        className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                          selectedSize === size
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border hover:border-primary/60'
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               {/* Quantity + Add to Cart */}
               {product.inStock && (

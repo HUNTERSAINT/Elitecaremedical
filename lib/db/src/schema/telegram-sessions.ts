@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 export const telegramCartItemSchema = z.object({
   productId: z.number().int().positive(),
   quantity: z.number().int().positive(),
+  size: z.string().min(1).optional(),
 });
 
 export const telegramSessionContextSchema = z.object({
@@ -16,6 +17,7 @@ export const telegramSessionContextSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   adminUsername: z.string().optional(),
+  pendingProductId: z.number().int().positive().optional(),
   adminDraft: z
     .object({
       productId: z.number().int().positive().optional(),
@@ -23,6 +25,7 @@ export const telegramSessionContextSchema = z.object({
       price: z.string().optional(),
       categoryId: z.number().int().positive().optional(),
       description: z.string().optional(),
+      sizes: z.array(z.string().min(1)).optional(),
     })
     .optional(),
 });

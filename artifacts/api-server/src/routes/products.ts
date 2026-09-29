@@ -43,6 +43,7 @@ router.get("/products", async (req, res): Promise<void> => {
         categoryName: categoriesTable.name,
         imageUrl: productsTable.imageUrl,
         images: productsTable.images,
+         sizes: productsTable.sizes,
         inStock: productsTable.inStock,
         isFeatured: productsTable.isFeatured,
         brand: productsTable.brand,
@@ -68,6 +69,7 @@ router.get("/products", async (req, res): Promise<void> => {
     originalPrice: p.originalPrice ? parseFloat(p.originalPrice) : null,
     categoryName: p.categoryName ?? "",
     images: p.images ?? [],
+    sizes: p.sizes ?? [],
     createdAt: p.createdAt.toISOString(),
   }));
 
@@ -86,7 +88,7 @@ router.post("/products", verifyAdminToken, async (req, res): Promise<void> => {
     return;
   }
 
-  const { price, originalPrice, images, ...rest } = parsed.data;
+  const { price, originalPrice, images, sizes, ...rest } = parsed.data;
   const [product] = await db
     .insert(productsTable)
     .values({
@@ -94,6 +96,7 @@ router.post("/products", verifyAdminToken, async (req, res): Promise<void> => {
       price: String(price),
       originalPrice: originalPrice != null ? String(originalPrice) : null,
       images: images ?? [],
+      sizes: sizes ?? [],
     })
     .returning();
 
@@ -105,6 +108,7 @@ router.post("/products", verifyAdminToken, async (req, res): Promise<void> => {
     originalPrice: product.originalPrice ? parseFloat(product.originalPrice) : null,
     categoryName: cat?.name ?? "",
     images: product.images ?? [],
+    sizes: product.sizes ?? [],
     createdAt: product.createdAt.toISOString(),
   });
 });
@@ -128,6 +132,7 @@ router.get("/products/:id", async (req, res): Promise<void> => {
       categoryName: categoriesTable.name,
       imageUrl: productsTable.imageUrl,
       images: productsTable.images,
+      sizes: productsTable.sizes,
       inStock: productsTable.inStock,
       isFeatured: productsTable.isFeatured,
       brand: productsTable.brand,
@@ -150,6 +155,7 @@ router.get("/products/:id", async (req, res): Promise<void> => {
     originalPrice: product.originalPrice ? parseFloat(product.originalPrice) : null,
     categoryName: product.categoryName ?? "",
     images: product.images ?? [],
+    sizes: product.sizes ?? [],
     createdAt: product.createdAt.toISOString(),
   });
 });
@@ -167,11 +173,12 @@ router.patch("/products/:id", verifyAdminToken, async (req, res): Promise<void> 
     return;
   }
 
-  const { price, originalPrice, images, ...rest } = parsed.data;
+  const { price, originalPrice, images, sizes, ...rest } = parsed.data;
   const updateValues: Record<string, unknown> = { ...rest };
   if (price !== undefined) updateValues.price = String(price);
   if (originalPrice !== undefined) updateValues.originalPrice = originalPrice != null ? String(originalPrice) : null;
   if (images !== undefined) updateValues.images = images;
+  if (sizes !== undefined) updateValues.sizes = sizes;
 
   const [product] = await db
     .update(productsTable)
@@ -192,6 +199,7 @@ router.patch("/products/:id", verifyAdminToken, async (req, res): Promise<void> 
     originalPrice: product.originalPrice ? parseFloat(product.originalPrice) : null,
     categoryName: cat?.name ?? "",
     images: product.images ?? [],
+    sizes: product.sizes ?? [],
     createdAt: product.createdAt.toISOString(),
   });
 });

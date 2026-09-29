@@ -69,6 +69,7 @@ export default function Checkout() {
         items: items.map(i => ({
           productId: i.product.id,
           quantity: i.quantity,
+          ...(i.size ? { size: i.size } : {}),
         })),
       },
     }, {
@@ -297,7 +298,7 @@ export default function Checkout() {
 
                   <div className="space-y-3 mb-5">
                     {items.map(item => (
-                      <div key={item.product.id} className="flex items-center gap-3">
+                      <div key={`${item.product.id}-${item.size ?? 'default'}`} className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-muted overflow-hidden shrink-0">
                           {item.product.imageUrl ? (
                             <img src={item.product.imageUrl} alt={item.product.name} className="w-full h-full object-cover" />
@@ -309,7 +310,7 @@ export default function Checkout() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-xs font-medium text-foreground line-clamp-1">{item.product.name}</div>
-                          <div className="text-xs text-muted-foreground">Qty: {item.quantity}</div>
+                           <div className="text-xs text-muted-foreground">Qty: {item.quantity}{item.size ? ` · Size: ${item.size}` : ''}</div>
                         </div>
                         <div className="text-xs font-semibold text-foreground shrink-0">{formatNaira(item.product.price * item.quantity)}</div>
                       </div>
