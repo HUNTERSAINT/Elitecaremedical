@@ -32,6 +32,7 @@ const TELEGRAM_ADMIN_CHAT_IDS = new Set(
 );
 const DELIVERY_FEE = 2000;
 let telegramApiUnauthorized = false;
+let telegramPollingConflict = false;
 
 type TelegramUser = {
   id: number;
@@ -217,6 +218,9 @@ async function telegramRequest<T>(
   if (!response.ok || !body.ok) {
     if (response.status === 401 || body.error_code === 401) {
       telegramApiUnauthorized = true;
+    }
+    if (method === "getUpdates" && (response.status === 409 || body.error_code === 409)) {
+      telegramPollingConflict = true;
     }
     logger.error(
       { method, status: response.status, description: body.description },
@@ -1045,10 +1049,12 @@ async function pollTelegram(): Promise<void> {
           timeout: 25,
           allowed_updates: ["message"],
         })) ?? [];
-      if (telegramApiUnauthorized) {
+      if (telegramApiUnauthorized || telegramPollingConflict) {
         polling = false;
         logger.error(
-          "Telegram polling stopped because TELEGRAM_BOT_TOKEN was rejected",
+          telegramApiUnauthorized
+            ? "Telegram polling stopped because TELEGRAM_BOT_TOKEN was rejected"
+            : "Telegram polling stopped because another bot instance owns getUpdates",
         );
         break;
       }
@@ -1070,6 +1076,7 @@ async function pollTelegram(): Promise<void> {
 export function startTelegramBot(): void {
   if (!BOT_TOKEN || USE_WEBHOOK || polling) return;
   telegramApiUnauthorized = false;
+  telegramPollingConflict = false;
   polling = true;
   void telegramRequest("setMyCommands", {
     commands: [
