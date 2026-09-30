@@ -124,6 +124,35 @@ function getContext(value: unknown): TelegramSessionContext {
     }
   })() as Partial<TelegramSessionContext> | null;
   const pendingProductId = parsed?.pendingProductId;
+  const draft = parsed?.adminDraft;
+  const adminDraft =
+    draft && typeof draft === "object"
+      ? {
+          ...(typeof draft.productId === "number" &&
+          Number.isInteger(draft.productId) &&
+          draft.productId > 0
+            ? { productId: draft.productId }
+            : {}),
+          ...(typeof draft.name === "string" ? { name: draft.name } : {}),
+          ...(typeof draft.price === "string" ? { price: draft.price } : {}),
+          ...(typeof draft.categoryId === "number" &&
+          Number.isInteger(draft.categoryId) &&
+          draft.categoryId > 0
+            ? { categoryId: draft.categoryId }
+            : {}),
+          ...(typeof draft.description === "string"
+            ? { description: draft.description }
+            : {}),
+          ...(Array.isArray(draft.sizes)
+            ? {
+                sizes: draft.sizes.filter(
+                  (size): size is string =>
+                    typeof size === "string" && size.trim().length > 0,
+                ),
+              }
+            : {}),
+        }
+      : undefined;
 
   return {
     cart: Array.isArray(parsed?.cart)
@@ -159,6 +188,7 @@ function getContext(value: unknown): TelegramSessionContext {
     pendingProductId > 0
       ? { pendingProductId }
       : {}),
+    ...(adminDraft ? { adminDraft } : {}),
     ...(typeof parsed?.adminUsername === "string"
       ? { adminUsername: parsed.adminUsername }
       : {}),
