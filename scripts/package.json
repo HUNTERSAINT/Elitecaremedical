@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
+    "ensure-production-schema": "tsx ./src/ensure-production-schema.ts",
     "seed-catalog": "tsx ./src/seed-catalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
